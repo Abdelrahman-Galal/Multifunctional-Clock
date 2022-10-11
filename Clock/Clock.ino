@@ -1,3 +1,4 @@
+
 #include <LiquidCrystal.h>
 #include <TimeLib.h>
 
@@ -8,9 +9,19 @@ const byte plusPin = 8; //connected to the plus button
 const byte minusPin = 10; //connected to the minus button
 const byte functionPin = 9; //connected to the function button
 int functionState = 0; //variable to track the state of the device (alarm set,alarm not set,count is done)
-int hours = 0;
-int minutes = 0;
+char formatedTime[6];
+char *currentMenuItem;
 
+byte arrow[] = {
+  B10000,
+  B11000,
+  B11100,
+  B11110,
+  B11110,
+  B11100,
+  B11000,
+  B10000
+};
 
 void setup() {
   pinMode(functionPin, INPUT);
@@ -20,156 +31,104 @@ void setup() {
   for (int i = 0; i < sizeof(welcomeString) / sizeof(welcomeString[0]) - 1; i++)
   {
     lcd.print(welcomeString[i]);
-    delay(300);
+    delay(100);
   }
+  lcd.createChar(0, arrow);
   lcd.setCursor(0, 1);
-  writeTime(hours, minutes);
-  //setTime(5, 3, 2, 28, 9, 2022);
+  Serial.begin(9600);
+  setBaseTime();
 }
 
 
 void loop() {
-  readTime(&hours , &minutes);
-  setTime(hours, minutes, 0, 28, 9, 2022);
-  while (1)
+  displayClock();
+  delay(500);
+  //functionState = 0;
+  dsiplayMenu();
+}
+
+void displayClock() {
+  functionState = 2;
+  while (digitalRead(functionPin))
   {
     lcd.setCursor(0, 0);
     writeTimeOfDay();
     lcd.setCursor(0, 1);
     writeTime(hour(), minute());
-  }
 
+  }
 }
 
 //function to prompot user to set counting time
 void readTime(int *h , int *m)
 {
-  //three variables to calc seconds according to how many time the plus and minus buttons have been pushed
-  int secondsPlusCount = 0;
-  int secondsMinusCount = 0;
+  //variable to calc seconds according to how many time the plus and minus buttons have been pushed
   int secondsTotalCount = 0;
-  //three variables to calc minutes according to how many time the plus and minus buttons have been pushed
-  int minsPlusCount = 0;
-  int minsMinusCount = 0;
+  //variable to calc minutes according to how many time the plus and minus buttons have been pushed
   int minsTotalCount = 0;
   unsigned long lastButtonPush = millis();   //last time either plus or mins button has been pushed
   int buttonsState = 0; //to choose between setting minutes or seconds (defaultt 0 seconds)
-  functionState = 0;   // functionState = 0 while not counting means that user set time
   //exist only when either plus or mins button have been pushed AND the user is inactive for 5 seconds
   while (!functionState || ( millis() - lastButtonPush < 5000) )
   {
+    lcd.setCursor(0, 1);
+    writeTime(*h, *m);
     //toggle between setting mins or seconds when function button is pushed
     if (digitalRead(functionPin) == LOW)
     {
       buttonsState = !buttonsState; //toggle between mins and seconds
-      customDelay(*h, *m);
+      formatTime(formatedTime, *h, *m);
+      customDelay(formatedTime, 0, 1);
     }
-
     if (!buttonsState)
     {
-      lcd.setCursor(0, 1);
-      writeTime(*h, *m);
-      //check plus button
-      if (digitalRead(plusPin) == LOW)
+      if (calculateTotalPushes(&secondsTotalCount))
       {
-        customDelay(*h, *m);
-        secondsPlusCount++;
         functionState = 1;
         lastButtonPush = millis();
       }
-      //check minus button
-      if (digitalRead(minusPin) == LOW)
-      {
-        customDelay(*h, *m);
-        secondsMinusCount++;
-        functionState = 1;
-        lastButtonPush = millis();
-      }
-      //to enable the user to start setting the seconds at 59
-      if (secondsTotalCount + secondsPlusCount - secondsMinusCount < 0 )
-      {
-        secondsTotalCount = 60 - secondsMinusCount;
-      }
-      else
-      {
-        secondsTotalCount = secondsTotalCount + secondsPlusCount - secondsMinusCount;
-      }
-      secondsPlusCount = 0;
-      secondsMinusCount = 0;
-      if (secondsTotalCount > 59)
-      {
-        *m = 0;
-        secondsTotalCount = 0;
-      }
-      else
-      {
-        *m = secondsTotalCount;
-      }
+      //enable the user to start setting the seconds at 59
+      secondsTotalCount = setCountLimit(secondsTotalCount , 0, 59);
+      *m = secondsTotalCount;
     }
     else {
       //check plus button
-      lcd.setCursor(0, 1);
-      writeTime(*h, *m);
-      if (digitalRead(plusPin) == LOW)
+      if (calculateTotalPushes(&minsTotalCount))
       {
-        customDelay(*h, *m);
-        minsPlusCount++;
         functionState = 1;
         lastButtonPush = millis();
       }
-      //check minus button
-      if (digitalRead(minusPin) == LOW)
-      {
-        customDelay(*h, *m);
-        minsMinusCount++;
-        functionState = 1;
-        lastButtonPush = millis();
-      }
-      //to enable the user to start setting the minutes at 23
-      if (minsTotalCount + minsPlusCount - minsMinusCount < 0 )
-      {
-        minsTotalCount = 24 - minsMinusCount;
-      }
-      else
-      {
-        minsTotalCount = minsTotalCount + minsPlusCount - minsMinusCount;
-      }
-      minsPlusCount = 0;
-      minsMinusCount = 0;
-      if (minsTotalCount > 23)
-      {
-        *h = 0;
-        minsTotalCount = 0;
-      }
-      else
-      {
-        *h = minsTotalCount;
-      }
+      //enable the user to start setting the minutes at 23
+      minsTotalCount = setCountLimit(minsTotalCount , 0, 23);
+      *h = minsTotalCount;
     }
   }
-  functionState = 0;
 }
 
 void writeTime(int h, int m) {
-  char formatedTime[6];
-  if (second() % 2)
-  {
-    sprintf(formatedTime, "%02d %02d", h, m);
-  }
-  else
-  {
-    sprintf(formatedTime, "%02d:%02d", h, m);
-  }
+  formatTime(formatedTime, h, m);
   lcd.print(formatedTime);
 }
 
+void formatTime(char *string, int h, int m)
+{
+  if (second() % 2)
+  {
+    sprintf(string, "%02d %02d", h, m);
+  }
+  else
+  {
+    sprintf(string, "%02d:%02d", h, m);
+  }
+}
+
 //function to encounter for button bouncing by introducing a delay
-void customDelay(int h, int m)
+void customDelay(char *string, int column, int row)
 {
   for (int i = 0 ; i < 120; i++)
   {
-    lcd.setCursor(0, 1);
-    writeTime(h, m);
+    lcd.setCursor(column, row);
+    lcd.print(string);
   }
 }
 
@@ -194,4 +153,92 @@ void writeTimeOfDay()
       lcd.print("Good Evening!");
     }
   }
+}
+
+void dsiplayMenu() {
+  const char *menuItems[3];
+  menuItems[0] = "Set Time ";
+  menuItems[1] = "Set Alarm";
+  menuItems[2] = "Exit      ";
+  currentMenuItem = (char *) menuItems[0];
+  int totalButtonPushes = 0;
+  lcd.clear();
+  while (digitalRead(functionPin)) {
+    calculateTotalPushes(&totalButtonPushes);
+    totalButtonPushes = setCountLimit(totalButtonPushes , 0, 2);
+    currentMenuItem = (char *) menuItems[totalButtonPushes];
+    lcd.setCursor(0, 0);
+    lcd.write(byte(0));
+    lcd.print(menuItems[totalButtonPushes]);
+  }
+  delay(500);
+  switch (totalButtonPushes) {
+    case 0:
+      lcd.setCursor(0, 1);
+      setBaseTime();
+      break;
+    case 1:
+      break;
+    case 2:
+      break;
+  }
+}
+
+
+bool calculateTotalPushes(int *totalButtonPushes) {
+  bool isPushed = 0;
+  if (digitalRead(plusPin) == LOW)
+  {
+    //delay(500);
+    if (functionState == 1 || functionState == 0)
+    {
+      formatTime(formatedTime, hour(), minute());
+      customDelay(formatedTime, 0, 1);
+    }
+    else
+    {
+      customDelay(formatedTime, 0, 0);
+    }
+    ++*totalButtonPushes;
+    isPushed = 1;
+  }
+  if (digitalRead(minusPin) == LOW)
+  {
+    if (functionState == 1)
+    {
+      formatTime(formatedTime, hour(), minute());
+      customDelay(formatedTime, 0, 1);
+    }
+    else
+    {
+      customDelay(formatedTime, 0, 0);
+    }
+    --*totalButtonPushes;
+    isPushed = 1;
+  }
+  return isPushed;
+}
+
+int setCountLimit(int count , int lowerLimit, int upperLimit)
+{
+  if (count < lowerLimit)
+  {
+    count = count + upperLimit + 1;
+  }
+  else if (count > upperLimit)
+  {
+    count = 0;
+  }
+  return count;
+}
+
+void setBaseTime() {
+  int hours = 0;
+  int minutes = 0;
+  functionState = 0;   // functionState = 0 while not counting means that user set time
+  lcd.setCursor(0, 1);
+  writeTime(hours, minutes);
+  readTime(&hours , &minutes);
+  setTime(hours, minutes, 0, 28, 9, 2022);
+  return;
 }
