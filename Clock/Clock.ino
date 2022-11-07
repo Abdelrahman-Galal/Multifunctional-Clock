@@ -356,7 +356,7 @@ void setAlarm() {
       return;
     }
   }
-  // in case user does not confrm new alaram , keep old values
+  // in case user does not confirm new alaram , keep old values
   functionState = previous_functionState;
   alarmHours = hours;
   alarmMinutes = minutes;
